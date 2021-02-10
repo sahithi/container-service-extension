@@ -39,6 +39,17 @@ class MQTTConsumer:
         self._publish_lock = Lock()
         self._is_closing = False
 
+    def form_behavior_response_json(self, task_id, entity_id, payload):
+        response_json = {
+            "type": "BEHAVIOR_RESPONSE",
+            "headers": {
+                "taskId": task_id,
+                "entityId": entity_id
+            },
+            "payload": payload
+        }
+        return response_json
+
     def form_response_json(self, request_id, status_code, reply_body_str,
                            task_path=None):
         response_json = {
@@ -67,22 +78,35 @@ class MQTTConsumer:
         return response_json
 
     def process_mqtt_message(self, msg):
-        msg_json, reply_body, status_code, req_id = utils.get_response_fields(
-            request_msg=msg,
-            fsencoding=self.fsencoding,
-            is_mqtt=True)
 
-        LOGGER.debug(f"Received message with request_id: {req_id}, mid: "
-                     f"{msg.mid}, and msg json: {msg_json}")
+        msg_json = json.loads(msg.payload.decode(self.fsencoding))
 
-        task_path = utils.get_task_path_from_reply_body(reply_body)
-        reply_body_str = json.dumps(reply_body)
-        response_json = self.form_response_json(
-            request_id=req_id,
-            status_code=status_code,
-            reply_body_str=reply_body_str,
-            task_path=task_path)
+        if msg_json['type'] == 'BEHAVIOR_INVOCATION':
+            task_id = msg_json['headers']['taskId']
+            entity_id = msg_json['headers']['entityId']
+            behavior_id = msg_json['headers']['behaviorId']
+            payload = json.loads(msg_json['payload'])
 
+            # Figure out the RDE in use and invoke the right cluster_service.py (or) API_handler serving that RDE.
+            # Use behavior Id to invoke the right method.
+            reply_body = self.create_cluster(task_id, entity_id, payload['entity'], payload['arguments'])
+            response_json = self.form_behavior_response_json(task_id, entity_id, reply_body)
+        else:
+            msg_json, reply_body, status_code, req_id = utils.get_response_fields(
+                request_msg=msg,
+                fsencoding=self.fsencoding,
+                is_mqtt=True)
+
+            LOGGER.debug(f"Received message with request_id: {req_id}, mid: "
+                         f"{msg.mid}, and msg json: {msg_json}")
+
+            task_path = utils.get_task_path_from_reply_body(reply_body)
+            reply_body_str = json.dumps(reply_body)
+            response_json = self.form_response_json(
+                request_id=req_id,
+                status_code=status_code,
+                reply_body_str=reply_body_str,
+                task_path=task_path)
         self.send_response(response_json)
         LOGGER.debug(f'MQTT response: {response_json}')
 
@@ -168,3 +192,6 @@ class MQTTConsumer:
 
     def get_num_total_threads(self):
         return self._ctpe.get_num_total_threads()
+
+    def create_cluster(self, task_id, entity_id, entity, args):
+        return "cluster creation successful"
